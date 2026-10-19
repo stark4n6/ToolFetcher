@@ -40,6 +40,7 @@ class ToolFetcherApp(ctk.CTk):
         self.script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         self.tools_config = None
         self.tools_dir = ""
+        self.remote_cache = {}
         self.row_widgets = {} 
         self.is_running = False
 
@@ -65,8 +66,11 @@ class ToolFetcherApp(ctk.CTk):
         self.btn_load = ctk.CTkButton(top_frame, text="Load Config", command=self.load_config, width=120)
         self.btn_load.pack(side="left", padx=(0, 10))
 
-        self.btn_check = ctk.CTkButton(top_frame, text="Check Updates", command=self.start_check_thread, state="disabled", width=120)
-        self.btn_check.pack(side="left", padx=(0, 10))
+        self.btn_check = ctk.CTkButton(top_frame, text="Check For Updates", command=self.start_check_thread, state="disabled", width=160)
+        self.btn_check.pack(side="right")
+        
+        self.lbl_last_checked = ctk.CTkLabel(top_frame, text="Last Checked: Never", text_color="gray")
+        self.lbl_last_checked.pack(side="right", padx=(0, 20))
 
         action_frame = ctk.CTkFrame(self, fg_color="transparent")
         action_frame.pack(fill="x", padx=10, pady=(0, 5))
@@ -79,16 +83,11 @@ class ToolFetcherApp(ctk.CTk):
         self.group_dropdown = ctk.CTkOptionMenu(action_frame, variable=self.group_filter_var, values=["All Groups"], command=self.apply_filter, width=160)
         self.group_dropdown.pack(side="left", padx=(0, 10))
 
-        status_options = sorted([
-            "Pending", "Missing", "Update Available!", "Up to date", 
-            "Force Update Needed", "Manual Check", "Downloading...", 
-            "Processing...", "Finished", "Failed", "Error"
-        ])
         self.status_filter_var = ctk.StringVar(value="All Statuses")
         self.status_dropdown = ctk.CTkOptionMenu(
             action_frame, 
             variable=self.status_filter_var, 
-            values=["All Statuses"] + status_options, 
+            values=["All Statuses"], 
             command=self.apply_filter, 
             width=150
         )
@@ -133,6 +132,13 @@ class ToolFetcherApp(ctk.CTk):
         self.console.configure(state="disabled")
         self.update_idletasks()
 
+    def drop_focus(self):
+        """Forces the GUI to release the text entry and redraws the placeholder to bypass CustomTkinter rendering bugs."""
+        self.focus()
+        if not self.search_entry.get():
+            self.search_entry.configure(placeholder_text="")
+            self.search_entry.configure(placeholder_text="Filter Tool Name...")
+
     def update_counter(self):
         total = len(self.row_widgets)
         if total == 0:
@@ -151,6 +157,23 @@ class ToolFetcherApp(ctk.CTk):
             self.lbl_counter.configure(text=f"Selected: {selected} / {total}")
         else:
             self.lbl_counter.configure(text=f"Selected: {selected} / {visible}  (of {total} total)")
+
+    def update_status_dropdown(self):
+        if not self.row_widgets:
+            self.status_dropdown.configure(values=["All Statuses"])
+            return
+
+        unique_statuses = set()
+        for data in self.row_widgets.values():
+            unique_statuses.add(data["lbl_status"].cget("text"))
+        
+        status_list = ["All Statuses"] + sorted(list(unique_statuses))
+        self.status_dropdown.configure(values=status_list)
+        
+        current = self.status_filter_var.get()
+        if current not in status_list:
+            self.status_filter_var.set("All Statuses")
+            self.apply_filter()
 
     def select_all(self):
         for data in self.row_widgets.values():
@@ -223,8 +246,58 @@ class ToolFetcherApp(ctk.CTk):
                 widget.configure(**kwargs)
                 
             self.update_counter()
+            self.update_status_dropdown()
                 
         self.after(0, _update)
+
+    def evaluate_status(self, data):
+        """Universal status logic helper for both Cached configurations and Live Updates"""
+        local_ver = data.get("local", "Not Installed")
+        remote_ver = data.get("remote_ver", "Click Check")
+        method = data.get("method", "Unknown")
+
+        if local_ver == "Not Installed":
+            return "Missing", "#ff6b6b", True
+        if local_ver in ["Unknown (No Marker)", "Marker Error"]:
+            return "Force Update Needed", "#feca57", True
+
+        if remote_ver in ["Error", "API Error/Rate Limit", "No Header Info"]:
+            return "Error", "red", False
+        if remote_ver == "Click Check":
+            return "Pending", "white", False
+        if remote_ver == "Manual Check Required":
+            return "Manual Check", "white", False
+
+        is_update = False
+        if method == "specificFile":
+            loc_etag = data.get("local_etag", "")
+            loc_mod = data.get("local_last_modified", "")
+            rem_etag = data.get("remote_etag", "")
+            rem_mod = data.get("remote_last_mod", "")
+
+            if rem_etag and loc_etag:
+                is_update = (rem_etag != loc_etag)
+            elif rem_mod and loc_mod:
+                is_update = (rem_mod != loc_mod)
+            else:
+                is_update = True
+                rem_dt = data.get("remote_dt")
+                loc_ts_str = data.get("local_timestamp", "")
+
+                if rem_dt and loc_ts_str:
+                    try:
+                        loc_dt = datetime.strptime(loc_ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                        if rem_dt <= loc_dt:
+                            is_update = False
+                    except:
+                        pass
+        else:
+            is_update = (local_ver != remote_ver)
+
+        if is_update:
+            return "Update Available!", "#ff6b6b", True
+        else:
+            return "Up to date", "#1dd1a1", False
 
     def load_config(self):
         yaml_path = filedialog.askopenfilename(
@@ -242,8 +315,8 @@ class ToolFetcherApp(ctk.CTk):
         
         self.search_entry.delete(0, "end")
         
-        # Add a 100ms delay to force the GUI to drop focus AFTER the OS window settles
-        self.after(100, self.focus_set)
+        # Fire the new bulletproof placeholder redrawer 200ms after the file dialog closes
+        self.after(200, self.drop_focus)
         
         self.status_filter_var.set("All Statuses")
         unique_groups = set()
@@ -256,6 +329,19 @@ class ToolFetcherApp(ctk.CTk):
             self.tools_dir = self.tools_config.get("tooldirectory", "")
             if not self.tools_dir:
                 self.tools_dir = os.path.join(self.script_dir, "Tools")
+                
+            cache_path = os.path.join(self.tools_dir, ".remote_cache.json")
+            self.remote_cache = {}
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        self.remote_cache = json.load(f)
+                except Exception as e:
+                    self.log(f"Warning: Failed to load remote cache ({e})")
+            
+            meta = self.remote_cache.get("_meta", {})
+            last_checked = meta.get("last_checked", "Never")
+            self.lbl_last_checked.configure(text=f"Last Checked: {last_checked}")
 
             for tool in self.tools_config.get("tools", []):
                 t_name = tool.get("name") or tool.get("Name")
@@ -279,28 +365,28 @@ class ToolFetcherApp(ctk.CTk):
 
                 marker_file = os.path.join(output_folder, ".downloaded.json")
                 local_ver = "Not Installed"
-                meta = None
+                marker_meta = None
 
                 if os.path.exists(marker_file):
                     try:
                         with open(marker_file, 'r', encoding='utf-16') as mf:
-                            meta = json.load(mf)
+                            marker_meta = json.load(mf)
                     except UnicodeError:
                         try:
                             with open(marker_file, 'r', encoding='utf-8-sig') as mf:
-                                meta = json.load(mf)
+                                marker_meta = json.load(mf)
                         except:
                             pass
                     except:
                         pass
 
-                    if meta:
+                    if marker_meta:
                         if method in ["gitClone", "branchZip"]:
-                            local_ver = meta.get("CommitHash", "Unknown")
+                            local_ver = marker_meta.get("CommitHash", "Unknown")
                             if local_ver and len(local_ver) >= 40:
                                 local_ver = local_ver[:7]
                         elif method == "specificFile":
-                            local_ver = meta.get("LastModified") or meta.get("ETag") or meta.get("Timestamp", "Downloaded")
+                            local_ver = marker_meta.get("LastModified") or marker_meta.get("ETag") or marker_meta.get("Timestamp", "Downloaded")
                             try:
                                 dt = parsedate_to_datetime(local_ver)
                                 local_ver = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -309,23 +395,49 @@ class ToolFetcherApp(ctk.CTk):
                                     clean = local_ver.replace('W/"', '').replace('"', '')
                                     local_ver = clean[:7] if len(clean) >= 7 else clean
                         else:
-                            local_ver = meta.get("Version", "Unknown")
+                            local_ver = marker_meta.get("Version", "Unknown")
                             
                         if not local_ver: 
-                            local_ver = meta.get("Timestamp", "Downloaded")
+                            local_ver = marker_meta.get("Timestamp", "Downloaded")
                     else:
                         local_ver = "Marker Error"
                         
                 elif os.path.exists(output_folder) and any(os.scandir(output_folder)):
                     local_ver = "Unknown (No Marker)"
+                    
+                cached = self.remote_cache.get(t_name, {})
+                remote_ver = cached.get("remote_ver", "Click Check")
+                
+                temp_data = {
+                    "local": local_ver,
+                    "remote_ver": remote_ver,
+                    "method": method,
+                    "local_etag": marker_meta.get("ETag", "") if marker_meta else "",
+                    "local_last_modified": marker_meta.get("LastModified", "") if marker_meta else "",
+                    "local_timestamp": marker_meta.get("Timestamp", "") if marker_meta else "",
+                    "remote_etag": cached.get("remote_etag", ""),
+                    "remote_last_mod": cached.get("remote_last_mod", ""),
+                    "remote_dt": None
+                }
+                
+                if cached.get("remote_dt"):
+                    try:
+                        temp_data["remote_dt"] = datetime.fromisoformat(cached["remote_dt"])
+                    except:
+                        pass
+                        
+                status, status_color, should_select = self.evaluate_status(temp_data)
 
-                chk_var = ctk.StringVar(value="off")
+                chk_var = ctk.StringVar(value=t_name if should_select else "off")
                 chk = ctk.CTkCheckBox(self.scroll_frame, text=t_name, variable=chk_var, onvalue=t_name, offvalue="off", width=10, command=self.update_counter)
+                if should_select:
+                    chk.select()
+                    
                 lbl_group = ctk.CTkLabel(self.scroll_frame, text=group_name, anchor="w", width=10)
                 lbl_method = ctk.CTkLabel(self.scroll_frame, text=method, anchor="w", width=10)
                 lbl_local = ctk.CTkLabel(self.scroll_frame, text=local_ver, anchor="w", width=10)
-                lbl_remote = ctk.CTkLabel(self.scroll_frame, text="Click Check", anchor="w", width=10)
-                lbl_status = ctk.CTkLabel(self.scroll_frame, text="Pending", anchor="w", width=10)
+                lbl_remote = ctk.CTkLabel(self.scroll_frame, text=remote_ver, anchor="w", width=10)
+                lbl_status = ctk.CTkLabel(self.scroll_frame, text=status, text_color=status_color, anchor="w", width=10)
                 prog_bar = ctk.CTkProgressBar(self.scroll_frame)
                 prog_bar.set(0)
 
@@ -333,15 +445,21 @@ class ToolFetcherApp(ctk.CTk):
                     "t_name": t_name, "group_name": group_name, "chk": chk, "chk_var": chk_var, "method": method, 
                     "local": local_ver, "lbl_group": lbl_group, "lbl_method": lbl_method, "lbl_local": lbl_local, "lbl_remote": lbl_remote, 
                     "lbl_status": lbl_status, "prog_bar": prog_bar, "tool_config": tool, "output_folder": output_folder,
-                    "local_etag": meta.get("ETag", "") if meta else "",
-                    "local_last_modified": meta.get("LastModified", "") if meta else "",
-                    "local_timestamp": meta.get("Timestamp", "") if meta else ""
+                    "local_etag": temp_data["local_etag"],
+                    "local_last_modified": temp_data["local_last_modified"],
+                    "local_timestamp": temp_data["local_timestamp"],
+                    "remote_ver": remote_ver,
+                    "dl_url": cached.get("dl_url", ""),
+                    "remote_etag": temp_data["remote_etag"],
+                    "remote_last_mod": temp_data["remote_last_mod"],
+                    "remote_dt": temp_data["remote_dt"]
                 }
 
             groups_list = ["All Groups"] + sorted(list(unique_groups))
             self.group_dropdown.configure(values=groups_list)
             self.group_filter_var.set("All Groups")
 
+            self.update_status_dropdown()
             self.apply_filter()
 
             self.btn_check.configure(state="normal")
@@ -358,17 +476,68 @@ class ToolFetcherApp(ctk.CTk):
             headers["Authorization"] = f"token {pat}"
         return headers
 
-    def start_check_thread(self):
-        # Delayed focus shift to protect placeholder text when clicking check
-        self.after(100, self.focus_set)
-        self.btn_check.configure(state="disabled", text="Checking...")
-        threading.Thread(target=self.check_updates, daemon=True).start()
+    def save_cache(self):
+        if not self.tools_dir:
+            return
+        cache_path = os.path.join(self.tools_dir, ".remote_cache.json")
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.remote_cache, f, indent=4)
+        except Exception as e:
+            self.log(f"Failed to save remote cache: {e}")
 
-    def check_updates(self):
-        self.log("Starting remote update check...")
+    def _finish_check(self):
+        self.btn_check.configure(state="normal", text="Check For Updates")
+        
+        meta = self.remote_cache.get("_meta", {})
+        last_checked = meta.get("last_checked", "Never")
+        self.lbl_last_checked.configure(text=f"Last Checked: {last_checked}")
+        
+        self.update_status_dropdown()
+        self.apply_filter()
+
+    def _finish_downloads(self):
+        self.btn_run.configure(state="normal", text="Run Selected Updates")
+        self.is_running = False
+        self.update_status_dropdown()
+        self.apply_filter()
+
+    def start_check_thread(self):
+        self.after(200, self.drop_focus)
+        
+        pat = self.pat_entry.get()
+        if not pat:
+            proceed = messagebox.askyesno(
+                "Missing GitHub PAT", 
+                "You have not entered a GitHub Personal Access Token (PAT).\n\n"
+                "Checking GitHub without a token heavily limits your API requests and may result in 'API Error/Rate Limit' failures.\n\n"
+                "Do you still want to proceed?"
+            )
+            if not proceed:
+                return
+
+        selected_tools = [t for t, d in self.row_widgets.items() if d["chk_var"].get() == t and bool(d["chk"].grid_info())]
+        
+        if not selected_tools:
+            proceed = messagebox.askyesno("Check All?", "No tools are currently selected.\n\nDo you want to check ALL visible tools instead?")
+            if not proceed:
+                return
+            tools_to_check = [t for t, d in self.row_widgets.items() if bool(d["chk"].grid_info())]
+            if not tools_to_check:
+                messagebox.showinfo("Info", "No tools are currently visible to check.")
+                return
+        else:
+            tools_to_check = selected_tools
+
+        self.btn_check.configure(state="disabled", text="Checking...")
+        threading.Thread(target=self.check_updates, args=(tools_to_check,), daemon=True).start()
+
+    def check_updates(self, tools_to_check):
+        self.log(f"Starting remote update check for {len(tools_to_check)} visible tools...")
         headers = self.get_headers()
 
-        for t_name, data in self.row_widgets.items():
+        for t_name in tools_to_check:
+            data = self.row_widgets[t_name]
             method = data["method"]
             repo_url = data["tool_config"].get("RepoUrl", "")
             local_ver = data["local"]
@@ -446,64 +615,35 @@ class ToolFetcherApp(ctk.CTk):
 
                 data["dl_url"] = dl_url
                 data["remote_ver"] = remote_ver
+                
+                self.remote_cache[t_name] = {
+                    "remote_ver": remote_ver,
+                    "dl_url": dl_url,
+                    "remote_etag": data.get("remote_etag", ""),
+                    "remote_last_mod": data.get("remote_last_mod", ""),
+                    "remote_dt": data["remote_dt"].isoformat() if data.get("remote_dt") else None
+                }
 
-                if local_ver == "Not Installed":
-                    status, status_color = "Missing", "#ff6b6b"
-                    self.update_widget(data["chk"], select=True, var_name=t_name)
-                elif local_ver in ["Unknown (No Marker)", "Marker Error"]:
-                    status, status_color = "Force Update Needed", "#feca57"
-                    self.update_widget(data["chk"], select=True, var_name=t_name)
-                elif remote_ver not in ["Error", "Manual Check Required", "No Header Info"]:
-                    if method == "specificFile":
-                        loc_etag = data.get("local_etag", "")
-                        loc_mod = data.get("local_last_modified", "")
-                        rem_etag = data.get("remote_etag", "")
-                        rem_mod = data.get("remote_last_mod", "")
-                        
-                        if rem_etag and loc_etag:
-                            is_update = (rem_etag != loc_etag)
-                        elif rem_mod and loc_mod:
-                            is_update = (rem_mod != loc_mod)
-                        else:
-                            is_update = True
-                            rem_dt = data.get("remote_dt")
-                            loc_ts_str = data.get("local_timestamp", "")
-                            
-                            if rem_dt and loc_ts_str:
-                                try:
-                                    loc_dt = datetime.strptime(loc_ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                                    if rem_dt <= loc_dt:
-                                        is_update = False
-                                except:
-                                    pass
-                                    
-                        if is_update:
-                            status, status_color = "Update Available!", "#ff6b6b"
-                            self.update_widget(data["chk"], select=True, var_name=t_name)
-                        else:
-                            status, status_color = "Up to date", "#1dd1a1"
-                            self.update_widget(data["chk"], select=False)
-                    else:
-                        if local_ver != remote_ver:
-                            status, status_color = "Update Available!", "#ff6b6b"
-                            self.update_widget(data["chk"], select=True, var_name=t_name)
-                        else:
-                            status, status_color = "Up to date", "#1dd1a1"
-                            self.update_widget(data["chk"], select=False)
-                else:
-                    status = "Manual Check"
-                    self.update_widget(data["chk"], select=False)
+                status, status_color, should_select = self.evaluate_status(data)
 
             except Exception as e:
                 remote_ver = "API Error/Rate Limit"
                 status, status_color = "Error", "red"
+                should_select = False
 
             self.update_widget(data["lbl_remote"], text=remote_ver)
             self.update_widget(data["lbl_status"], text=status, text_color=status_color)
+            if should_select:
+                self.update_widget(data["chk"], select=True, var_name=t_name)
+            else:
+                self.update_widget(data["chk"], select=False)
+
+        timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.remote_cache["_meta"] = {"last_checked": timestamp_str}
 
         self.log("Remote check complete.")
-        self.update_widget(self.btn_check, state="normal", text="Check Updates")
-        self.after(500, self.apply_filter)
+        self.save_cache()
+        self.after(0, self._finish_check)
 
     def start_download_thread(self):
         selected_tools = [t for t, d in self.row_widgets.items() if d["chk_var"].get() == t and bool(d["chk"].grid_info())]
@@ -512,8 +652,7 @@ class ToolFetcherApp(ctk.CTk):
             messagebox.showinfo("Info", "Please select at least one visible tool to update.")
             return
 
-        # Delayed focus shift to protect placeholder text when hitting run
-        self.after(100, self.focus_set)
+        self.after(200, self.drop_focus)
         self.is_running = True
         self.btn_run.configure(state="disabled", text="Working...")
         threading.Thread(target=self.process_downloads, args=(selected_tools,), daemon=True).start()
@@ -573,7 +712,12 @@ class ToolFetcherApp(ctk.CTk):
                 else:
                     self.process_file(t_name, tmp_file, out_folder, data)
 
-                self.update_widget(data["lbl_status"], text="Finished", text_color="#1dd1a1")
+                data["local"] = data["remote_ver"]
+                data["local_etag"] = data.get("etag", "")
+                data["local_last_modified"] = data.get("last_modified", "")
+                data["local_timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+                self.update_widget(data["lbl_status"], text="Up to date", text_color="#1dd1a1")
                 self.update_widget(data["lbl_local"], text=data["remote_ver"])
                 self.log(f"[{t_name}] Successfully updated.")
 
@@ -583,8 +727,7 @@ class ToolFetcherApp(ctk.CTk):
 
         self.log("All selected tasks complete.")
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        self.update_widget(self.btn_run, state="normal", text="Run Selected Updates")
-        self.after(500, self.apply_filter)
+        self.after(0, self._finish_downloads)
 
     def hash_file(self, file_path):
         hasher = hashlib.md5()
@@ -638,7 +781,7 @@ class ToolFetcherApp(ctk.CTk):
         marker_file = os.path.join(out_folder, ".downloaded.json")
         meta = {
             "Tool": data["t_name"],
-            "Timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "Timestamp": data.get("local_timestamp"),
             "DownloadMethod": data["method"],
             "DownloadURL": data["dl_url"],
             "Version": data["remote_ver"] if data["method"] == "latestRelease" else "",
