@@ -34,7 +34,7 @@ class ToolFetcherApp(ctk.CTk):
         super().__init__()
 
         self.title("ToolFetcher - Python Edition")
-        self.geometry("1150x750")
+        self.geometry("1200x750")
         self.configure(fg_color=BG_COLOR)
 
         self.script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -59,7 +59,6 @@ class ToolFetcherApp(ctk.CTk):
         top_frame = ctk.CTkFrame(self, fg_color="transparent")
         top_frame.pack(fill="x", padx=10, pady=(10, 5))
 
-        # Replaced the separate label with a placeholder and aligned it to the left edge
         self.pat_entry = ctk.CTkEntry(top_frame, placeholder_text="GitHub PAT...", width=200, show="*")
         self.pat_entry.pack(side="left", padx=(0, 10))
 
@@ -72,15 +71,28 @@ class ToolFetcherApp(ctk.CTk):
         action_frame = ctk.CTkFrame(self, fg_color="transparent")
         action_frame.pack(fill="x", padx=10, pady=(0, 5))
 
-        # Text search field
         self.search_entry = ctk.CTkEntry(action_frame, placeholder_text="Filter Tool Name...", width=200)
         self.search_entry.bind("<KeyRelease>", self.apply_filter)
         self.search_entry.pack(side="left", padx=(0, 10))
 
-        # Group dropdown menu
         self.group_filter_var = ctk.StringVar(value="All Groups")
         self.group_dropdown = ctk.CTkOptionMenu(action_frame, variable=self.group_filter_var, values=["All Groups"], command=self.apply_filter, width=160)
         self.group_dropdown.pack(side="left", padx=(0, 10))
+
+        status_options = sorted([
+            "Pending", "Missing", "Update Available!", "Up to date", 
+            "Force Update Needed", "Manual Check", "Downloading...", 
+            "Processing...", "Finished", "Failed", "Error"
+        ])
+        self.status_filter_var = ctk.StringVar(value="All Statuses")
+        self.status_dropdown = ctk.CTkOptionMenu(
+            action_frame, 
+            variable=self.status_filter_var, 
+            values=["All Statuses"] + status_options, 
+            command=self.apply_filter, 
+            width=150
+        )
+        self.status_dropdown.pack(side="left", padx=(0, 10))
 
         self.btn_select_all = ctk.CTkButton(action_frame, text="Select All", command=self.select_all, width=100, fg_color="#3a4756", hover_color="#4a596a")
         self.btn_select_all.pack(side="left", padx=(0, 10))
@@ -90,6 +102,9 @@ class ToolFetcherApp(ctk.CTk):
 
         self.btn_run = ctk.CTkButton(action_frame, text="Run Selected Updates", command=self.start_download_thread, width=160)
         self.btn_run.pack(side="right")
+        
+        self.lbl_counter = ctk.CTkLabel(action_frame, text="Selected: 0 / 0", font=ctk.CTkFont(weight="bold"))
+        self.lbl_counter.pack(side="right", padx=(0, 20))
 
         self.header_frame = ctk.CTkFrame(self, fg_color="#1a2027", corner_radius=5)
         self.header_frame.pack(fill="x", padx=(10, 26), pady=(0, 0))
@@ -118,29 +133,54 @@ class ToolFetcherApp(ctk.CTk):
         self.console.configure(state="disabled")
         self.update_idletasks()
 
+    def update_counter(self):
+        total = len(self.row_widgets)
+        if total == 0:
+            self.lbl_counter.configure(text="Selected: 0 / 0")
+            return
+
+        visible = 0
+        selected = 0
+        for t_name, data in self.row_widgets.items():
+            if bool(data["chk"].grid_info()):
+                visible += 1
+                if data["chk_var"].get() == t_name:
+                    selected += 1
+        
+        if visible == total:
+            self.lbl_counter.configure(text=f"Selected: {selected} / {total}")
+        else:
+            self.lbl_counter.configure(text=f"Selected: {selected} / {visible}  (of {total} total)")
+
     def select_all(self):
         for data in self.row_widgets.values():
-            if data["chk"].winfo_ismapped():
+            if bool(data["chk"].grid_info()):
                 data["chk"].select()
                 data["chk_var"].set(data["t_name"])
+        self.update_counter()
 
     def deselect_all(self):
         for data in self.row_widgets.values():
-            data["chk"].deselect()
-            data["chk_var"].set("off")
+            if bool(data["chk"].grid_info()):
+                data["chk"].deselect()
+                data["chk_var"].set("off")
+        self.update_counter()
 
     def apply_filter(self, *args):
         query = self.search_entry.get().lower()
         selected_group = self.group_filter_var.get()
+        selected_status = self.status_filter_var.get()
         visible_row = 0
         
         for t_name, data in self.row_widgets.items():
             group_name = data["group_name"]
+            current_status = data["lbl_status"].cget("text")
             
             match_text = query in t_name.lower()
             match_group = (selected_group == "All Groups") or (group_name == selected_group)
+            match_status = (selected_status == "All Statuses") or (current_status == selected_status)
             
-            if match_text and match_group:
+            if match_text and match_group and match_status:
                 data["chk"].grid(row=visible_row, column=0, padx=10, pady=5, sticky="ew")
                 data["lbl_group"].grid(row=visible_row, column=1, padx=10, pady=5, sticky="ew")
                 data["lbl_method"].grid(row=visible_row, column=2, padx=10, pady=5, sticky="ew")
@@ -157,6 +197,8 @@ class ToolFetcherApp(ctk.CTk):
                 data["lbl_remote"].grid_forget()
                 data["lbl_status"].grid_forget()
                 data["prog_bar"].grid_forget()
+                
+        self.update_counter()
 
     def update_widget(self, widget, **kwargs):
         def _update():
@@ -180,6 +222,8 @@ class ToolFetcherApp(ctk.CTk):
             if kwargs:
                 widget.configure(**kwargs)
                 
+            self.update_counter()
+                
         self.after(0, _update)
 
     def load_config(self):
@@ -197,6 +241,11 @@ class ToolFetcherApp(ctk.CTk):
         self.row_widgets.clear()
         
         self.search_entry.delete(0, "end")
+        
+        # Add a 100ms delay to force the GUI to drop focus AFTER the OS window settles
+        self.after(100, self.focus_set)
+        
+        self.status_filter_var.set("All Statuses")
         unique_groups = set()
 
         self.log(f"Loading config from {yaml_path}")
@@ -256,7 +305,9 @@ class ToolFetcherApp(ctk.CTk):
                                 dt = parsedate_to_datetime(local_ver)
                                 local_ver = dt.strftime("%Y-%m-%d %H:%M:%S")
                             except:
-                                pass
+                                if local_ver and len(local_ver) > 10:
+                                    clean = local_ver.replace('W/"', '').replace('"', '')
+                                    local_ver = clean[:7] if len(clean) >= 7 else clean
                         else:
                             local_ver = meta.get("Version", "Unknown")
                             
@@ -269,7 +320,7 @@ class ToolFetcherApp(ctk.CTk):
                     local_ver = "Unknown (No Marker)"
 
                 chk_var = ctk.StringVar(value="off")
-                chk = ctk.CTkCheckBox(self.scroll_frame, text=t_name, variable=chk_var, onvalue=t_name, offvalue="off", width=10)
+                chk = ctk.CTkCheckBox(self.scroll_frame, text=t_name, variable=chk_var, onvalue=t_name, offvalue="off", width=10, command=self.update_counter)
                 lbl_group = ctk.CTkLabel(self.scroll_frame, text=group_name, anchor="w", width=10)
                 lbl_method = ctk.CTkLabel(self.scroll_frame, text=method, anchor="w", width=10)
                 lbl_local = ctk.CTkLabel(self.scroll_frame, text=local_ver, anchor="w", width=10)
@@ -308,6 +359,8 @@ class ToolFetcherApp(ctk.CTk):
         return headers
 
     def start_check_thread(self):
+        # Delayed focus shift to protect placeholder text when clicking check
+        self.after(100, self.focus_set)
         self.btn_check.configure(state="disabled", text="Checking...")
         threading.Thread(target=self.check_updates, daemon=True).start()
 
@@ -382,6 +435,11 @@ class ToolFetcherApp(ctk.CTk):
                         data["remote_dt"] = remote_dt
                         
                         remote_ver = remote_mod_formatted or remote_etag or "No Header Info"
+                        
+                        if remote_ver == remote_etag and remote_etag:
+                            clean = remote_etag.replace('W/"', '').replace('"', '')
+                            remote_ver = clean[:7] if len(clean) >= 7 else clean
+
                     except:
                         remote_ver = "Manual Check Required"
                     dl_url = repo_url
@@ -445,13 +503,17 @@ class ToolFetcherApp(ctk.CTk):
 
         self.log("Remote check complete.")
         self.update_widget(self.btn_check, state="normal", text="Check Updates")
+        self.after(500, self.apply_filter)
 
     def start_download_thread(self):
-        selected_tools = [t for t, d in self.row_widgets.items() if d["chk_var"].get() == t]
+        selected_tools = [t for t, d in self.row_widgets.items() if d["chk_var"].get() == t and bool(d["chk"].grid_info())]
+        
         if not selected_tools:
-            messagebox.showinfo("Info", "Please select at least one tool to update.")
+            messagebox.showinfo("Info", "Please select at least one visible tool to update.")
             return
 
+        # Delayed focus shift to protect placeholder text when hitting run
+        self.after(100, self.focus_set)
         self.is_running = True
         self.btn_run.configure(state="disabled", text="Working...")
         threading.Thread(target=self.process_downloads, args=(selected_tools,), daemon=True).start()
@@ -522,7 +584,7 @@ class ToolFetcherApp(ctk.CTk):
         self.log("All selected tasks complete.")
         shutil.rmtree(tmp_dir, ignore_errors=True)
         self.update_widget(self.btn_run, state="normal", text="Run Selected Updates")
-        self.is_running = False
+        self.after(500, self.apply_filter)
 
     def hash_file(self, file_path):
         hasher = hashlib.md5()

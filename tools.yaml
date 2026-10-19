@@ -5,7 +5,7 @@ tooldirectory: "" # Must escape any backslashes or use single forward slashes
 tools:
   - Name: "AmCache-EvilHunter" # confirmed 2026-09-16
     RepoUrl: "https://github.com/cristianzsh/amcache-evilhunter"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     DownloadName: "amcache_evilhunter.exe"
     OutputFolder: "WinRegistry"
     SkipDownload: false
@@ -45,7 +45,7 @@ tools:
 
   - Name: "Bmc-Tools-Compiled" # confirmed 2026-09-16
     RepoUrl: "https://github.com/Qazeer/bmc-tools-compiled/"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     DownloadName: "bmc-tools.exe"
     OutputFolder: "MISC"
     SkipDownload: false
@@ -178,16 +178,16 @@ tools:
     OutputFolder: "MSOffice"
     SkipDownload: false
 
-  - Name: "MemProcFs" # confirmed 2026-09-16
+  - Name: "MemProcFS" # confirmed 2026-09-16
     RepoUrl: "https://github.com/ufrisk/MemProcFS"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     DownloadName: "MemProcFS_files_and_binaries-win_x64-latest.zip"
     OutputFolder: "Memory"
     SkipDownload: false
 
   - Name: "MemProcFsAnalyzer" # confirmed 2026-09-16
     RepoUrl: "https://github.com/LETHAL-FORENSICS/MemProcFS-Analyzer"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     AssetFilename: "MemProcFS-Analyzer-v.*\\.zip"
     OutputFolder: "Memory"
     SkipDownload: false
@@ -206,7 +206,7 @@ tools:
 
   - Name: "Microsoft-Analyzer-Suite" # confirmed 2026-09-16
     RepoUrl: "https://github.com/LETHAL-FORENSICS/Microsoft-Analyzer-Suite"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     AssetFilename: "Microsoft-Analyzer-Suite-v.*\\.zip"
     OutputFolder: "CloudLogs"
     SkipDownload: false
@@ -245,7 +245,7 @@ tools:
 
   - Name: "RdpCacheStitcher" # confirmed 2026-09-16
     RepoUrl: "https://github.com/BSI-Bund/RdpCacheStitcher/"
-    DownloadMethod: "latestrelease"
+    DownloadMethod: "latestRelease"
     AssetFilename: "RdpCacheStitcher-.*-win64\\.zip"
     OutputFolder: "MISC"
     SkipDownload: false
